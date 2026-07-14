@@ -51,7 +51,74 @@ class Migration extends AbstractMigration
             $this->getLangStringHelper()->insertOrUpdateLangStrings(__DIR__, $group);
         }
 
+        $this->addWorkLocationMenuItem();
         $this->updateLangStringVersion($this->getVersion());
+    }
+
+    /**
+     * Add the existing Locations screen to Admin > Job without duplicating its
+     * permissions, API, or page implementation.
+     */
+    private function addWorkLocationMenuItem(): void
+    {
+        $jobMenuId = $this->createQueryBuilder()
+            ->select('menu_item.id')
+            ->from('ohrm_menu_item', 'menu_item')
+            ->where('menu_item.menu_title = :menuTitle')
+            ->andWhere('menu_item.level = :level')
+            ->setParameter('menuTitle', 'Job')
+            ->setParameter('level', 2)
+            ->setMaxResults(1)
+            ->executeQuery()
+            ->fetchOne();
+
+        $locationScreenId = $this->createQueryBuilder()
+            ->select('screen.id')
+            ->from('ohrm_screen', 'screen')
+            ->where('screen.action_url = :actionUrl')
+            ->setParameter('actionUrl', 'viewLocations')
+            ->setMaxResults(1)
+            ->executeQuery()
+            ->fetchOne();
+
+        if ($jobMenuId === false || $locationScreenId === false) {
+            return;
+        }
+
+        $workLocationMenuId = $this->createQueryBuilder()
+            ->select('menu_item.id')
+            ->from('ohrm_menu_item', 'menu_item')
+            ->where('menu_item.menu_title = :menuTitle')
+            ->andWhere('menu_item.parent_id = :parentId')
+            ->setParameter('menuTitle', 'Work Location')
+            ->setParameter('parentId', $jobMenuId)
+            ->setMaxResults(1)
+            ->executeQuery()
+            ->fetchOne();
+
+        if ($workLocationMenuId !== false) {
+            return;
+        }
+
+        $this->createQueryBuilder()
+            ->insert('ohrm_menu_item')
+            ->values([
+                'menu_title' => ':menuTitle',
+                'screen_id' => ':screenId',
+                'parent_id' => ':parentId',
+                'level' => ':level',
+                'order_hint' => ':orderHint',
+                'status' => ':status',
+                'additional_params' => ':additionalParams',
+            ])
+            ->setParameter('menuTitle', 'Work Location')
+            ->setParameter('screenId', $locationScreenId)
+            ->setParameter('parentId', $jobMenuId)
+            ->setParameter('level', 3)
+            ->setParameter('orderHint', 600)
+            ->setParameter('status', 1)
+            ->setParameter('additionalParams', null)
+            ->executeStatement();
     }
 
     /**
