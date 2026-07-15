@@ -1,5 +1,5 @@
 <?php
-
+ 
 /**
  * OrangeHRM is a comprehensive Human Resource Management (HRM) System that captures
  * all the essential functionalities required for any enterprise.
@@ -16,20 +16,20 @@
  * You should have received a copy of the GNU General Public License along with OrangeHRM.
  * If not, see <https://www.gnu.org/licenses/>.
  */
-
+ 
 namespace OrangeHRM\Installer\Migration\V5_8_0;
-
+ 
 use Doctrine\DBAL\Schema\ForeignKeyConstraint;
 use Doctrine\DBAL\Types\Type;
 use Doctrine\DBAL\Types\Types;
 use OrangeHRM\Installer\Util\V1\AbstractMigration;
 use OrangeHRM\Installer\Util\V1\LangStringHelper;
 use PDO;
-
+ 
 class Migration extends AbstractMigration
 {
     protected ?LangStringHelper $langStringHelper = null;
-
+ 
     /**
      * @inheritDoc
      */
@@ -37,23 +37,90 @@ class Migration extends AbstractMigration
     {
         $payGradeCurrencyTableDetails = $this->getSchemaManager()->introspectTable('ohrm_pay_grade_currency');
         $payGradeCurrencyCurrencyIdColumn = $payGradeCurrencyTableDetails->getColumn('currency_id');
-
+ 
         $basicSalaryTableDetails = $this->getSchemaManager()->introspectTable('hs_hr_emp_basicsalary');
         $basicSalaryCurrencyIdColumn = $basicSalaryTableDetails->getColumn('currency_id');
-
+ 
         // Check whether this is already corrected in v5_5_0 migration
         if ($basicSalaryCurrencyIdColumn->getLength() == 6 && $payGradeCurrencyCurrencyIdColumn->getLength() == 6) {
             $this->correctingCurrencyIdColumnInconsistencies();
         }
-
+ 
         $groups = ['auth', 'pim'];
         foreach ($groups as $group) {
             $this->getLangStringHelper()->insertOrUpdateLangStrings(__DIR__, $group);
         }
-
+ 
+        $this->addWorkLocationMenuItem();
         $this->updateLangStringVersion($this->getVersion());
     }
-
+ 
+    /**
+     * Add the existing Locations screen to Admin > Job without duplicating its
+     * permissions, API, or page implementation.
+     */
+    private function addWorkLocationMenuItem(): void
+    {
+        $jobMenuId = $this->createQueryBuilder()
+            ->select('menu_item.id')
+            ->from('ohrm_menu_item', 'menu_item')
+            ->where('menu_item.menu_title = :menuTitle')
+            ->andWhere('menu_item.level = :level')
+            ->setParameter('menuTitle', 'Job')
+            ->setParameter('level', 2)
+            ->setMaxResults(1)
+            ->executeQuery()
+            ->fetchOne();
+ 
+        $locationScreenId = $this->createQueryBuilder()
+            ->select('screen.id')
+            ->from('ohrm_screen', 'screen')
+            ->where('screen.action_url = :actionUrl')
+            ->setParameter('actionUrl', 'viewLocations')
+            ->setMaxResults(1)
+            ->executeQuery()
+            ->fetchOne();
+ 
+        if ($jobMenuId === false || $locationScreenId === false) {
+            return;
+        }
+ 
+        $workLocationMenuId = $this->createQueryBuilder()
+            ->select('menu_item.id')
+            ->from('ohrm_menu_item', 'menu_item')
+            ->where('menu_item.menu_title = :menuTitle')
+            ->andWhere('menu_item.parent_id = :parentId')
+            ->setParameter('menuTitle', 'Work Location')
+            ->setParameter('parentId', $jobMenuId)
+            ->setMaxResults(1)
+            ->executeQuery()
+            ->fetchOne();
+ 
+        if ($workLocationMenuId !== false) {
+            return;
+        }
+ 
+        $this->createQueryBuilder()
+            ->insert('ohrm_menu_item')
+            ->values([
+                'menu_title' => ':menuTitle',
+                'screen_id' => ':screenId',
+                'parent_id' => ':parentId',
+                'level' => ':level',
+                'order_hint' => ':orderHint',
+                'status' => ':status',
+                'additional_params' => ':additionalParams',
+            ])
+            ->setParameter('menuTitle', 'Work Location')
+            ->setParameter('screenId', $locationScreenId)
+            ->setParameter('parentId', $jobMenuId)
+            ->setParameter('level', 3)
+            ->setParameter('orderHint', 600)
+            ->setParameter('status', 1)
+            ->setParameter('additionalParams', null)
+            ->executeStatement();
+    }
+ 
     /**
      * Error in foreign key constraint of table ohrm_claim_request: Alter table ohrm_claim_request with foreign key fk_currency_id constraint failed.
      * Field type or character set for column 'currency_id' does not match referenced column 'currency_id'.
@@ -64,35 +131,35 @@ class Migration extends AbstractMigration
         $foreignKeyArray = [];
         $foreignKeyArray = array_merge($foreignKeyArray, $this->getConflictingForeignKeys('ohrm_pay_grade_currency'));
         $foreignKeyArray = array_merge($foreignKeyArray, $this->getConflictingForeignKeys('hs_hr_emp_basicsalary'));
-
+ 
         $this->removeConflictingForeignKeys($foreignKeyArray);
         $this->removeConflictingForeignKeys($this->getConflictingForeignKeys('ohrm_claim_request'));
-
+ 
         $this->getConnection()->executeStatement(
             'ALTER TABLE hs_hr_currency_type MODIFY COLUMN currency_id VARCHAR(3) CHARACTER SET utf8mb3 COLLATE utf8mb3_general_ci'
         );
-
+ 
         $this->getSchemaHelper()->changeColumn('ohrm_pay_grade_currency', 'currency_id', [
             'Type' => Type::getType(Types::STRING),
             'Notnull' => true,
             'Length' => 3,
             'CustomSchemaOptions' => ['collation' => 'utf8mb3_general_ci', 'charset' => 'utf8mb3']
         ]);
-
+ 
         $this->getSchemaHelper()->changeColumn('hs_hr_emp_basicsalary', 'currency_id', [
             'Type' => Type::getType(Types::STRING),
             'Notnull' => true,
             'Length' => 3,
             'CustomSchemaOptions' => ['collation' => 'utf8mb3_general_ci', 'charset' => 'utf8mb3']
         ]);
-
+ 
         $this->getSchemaHelper()->changeColumn('ohrm_claim_request', 'currency_id', [
             'Type' => Type::getType(Types::STRING),
             'Notnull' => true,
             'Length' => 3,
             'CustomSchemaOptions' => ['collation' => 'utf8mb3_general_ci', 'charset' => 'utf8mb3']
         ]);
-
+ 
         $this->recreateRemovedForeignKeys($foreignKeyArray);
         $foreignKeyConstraint = new ForeignKeyConstraint(
             ['currency_id'],
@@ -102,10 +169,10 @@ class Migration extends AbstractMigration
             ['onDelete' => 'RESTRICT', 'onUpdate' => 'CASCADE']
         );
         $this->getSchemaHelper()->addForeignKey('ohrm_claim_request', $foreignKeyConstraint);
-
+ 
         $this->enableForeignKeyChecks();
     }
-
+ 
     /**
      * @param string $childTable
      * @return array
@@ -122,7 +189,7 @@ class Migration extends AbstractMigration
         }
         return $foreignKeyArray;
     }
-
+ 
     /**
      * @param array $conflictingConstraints
      */
@@ -132,7 +199,7 @@ class Migration extends AbstractMigration
             $this->getSchemaHelper()->dropForeignKeys($conflictingConstraint['childTable'], [$constraintName]);
         }
     }
-
+ 
     /**
      * @param array $conflictingConstraints
      */
@@ -145,7 +212,7 @@ class Migration extends AbstractMigration
             );
         }
     }
-
+ 
     /**
      * @return PDO
      */
@@ -153,7 +220,7 @@ class Migration extends AbstractMigration
     {
         return $this->getConnection()->getNativeConnection();
     }
-
+ 
     /**
      * @return void
      */
@@ -162,7 +229,7 @@ class Migration extends AbstractMigration
         $pdo = $this->getNativeConnection();
         $pdo->exec('SET FOREIGN_KEY_CHECKS=0;');
     }
-
+ 
     /**
      * @return void
      */
@@ -171,7 +238,7 @@ class Migration extends AbstractMigration
         $pdo = $this->getNativeConnection();
         $pdo->exec('SET FOREIGN_KEY_CHECKS=1;');
     }
-
+ 
     /**
      * @inheritDoc
      */
@@ -179,7 +246,7 @@ class Migration extends AbstractMigration
     {
         return '5.8.0';
     }
-
+ 
     /**
      * @return LangStringHelper
      */
@@ -192,7 +259,7 @@ class Migration extends AbstractMigration
         }
         return $this->langStringHelper;
     }
-
+ 
     /**
      * @param string $version
      */
